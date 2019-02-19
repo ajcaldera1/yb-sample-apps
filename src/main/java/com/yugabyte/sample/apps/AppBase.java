@@ -50,6 +50,7 @@ import com.datastax.driver.core.JdkSSLOptions;
 import com.datastax.driver.core.exceptions.NoHostAvailableException;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import com.datastax.driver.core.policies.DefaultRetryPolicy;
+import com.datastax.driver.core.policies.LoadBalancingPolicy;
 import com.datastax.driver.core.policies.LoggingRetryPolicy;
 import com.yugabyte.driver.core.policies.PartitionAwarePolicy;
 import com.yugabyte.sample.common.CmdLineOpts;
@@ -204,14 +205,16 @@ public abstract class AppBase implements MetricsTracker.StatusMessageAppender {
           if (appConfig.enableAuth) {
               LOG.info("Connecting with user: " + appConfig.auth_user);
               cassandra_cluster =
-                  builder.withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
+                 builder.withLoadBalancingPolicy(getLoadBalancingPolicy())
+                 .withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
                  .withRetryPolicy(new LoggingRetryPolicy(DefaultRetryPolicy.INSTANCE))
                  .withCredentials(appConfig.auth_user, appConfig.auth_password)
                  .withSSL(sslOptions)
                  .build();
            } else {
               cassandra_cluster =
-                  builder.withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
+                  builder.withLoadBalancingPolicy(getLoadBalancingPolicy())
+                 .withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
                  .withRetryPolicy(new LoggingRetryPolicy(DefaultRetryPolicy.INSTANCE))
                  .withSSL(sslOptions)
                  .build();
@@ -224,14 +227,15 @@ public abstract class AppBase implements MetricsTracker.StatusMessageAppender {
           if (appConfig.enableAuth) {
               LOG.info("Connecting with user: " + appConfig.auth_user);
               cassandra_cluster =
-                  builder.withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
+                  builder.withLoadBalancingPolicy(getLoadBalancingPolicy())
+                  .withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
                   .withCredentials(appConfig.auth_user, appConfig.auth_password)
                   .withRetryPolicy(new LoggingRetryPolicy(DefaultRetryPolicy.INSTANCE))
                   .build();
           } else {
               cassandra_cluster =
-                  builder.withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
-                  .withCredentials(appConfig.auth_user, appConfig.auth_password)
+                  builder.withLoadBalancingPolicy(getLoadBalancingPolicy())
+                  .withQueryOptions(new QueryOptions().setDefaultIdempotence(true))
                   .withRetryPolicy(new LoggingRetryPolicy(DefaultRetryPolicy.INSTANCE))
                   .build();
           }
@@ -247,6 +251,20 @@ public abstract class AppBase implements MetricsTracker.StatusMessageAppender {
       cassandra_session = cassandra_cluster.connect();
       createKeyspace(cassandra_session, keyspace);
     }
+  }
+
+  protected LoadBalancingPolicy getLoadBalancingPolicy() {
+    DCAwareRoundRobinPolicy.Builder builder = DCAwareRoundRobinPolicy.builder();
+    if (appConfig.localDc != null && !appConfig.localDc.isEmpty()) {
+      builder.withLocalDc(appConfig.localDc)
+             .withUsedHostsPerRemoteDc(Integer.MAX_VALUE)
+             .allowRemoteDCsForLocalConsistencyLevel();
+    }
+    LoadBalancingPolicy policy = builder.build();
+    if (!appConfig.disableYBLoadBalancingPolicy) {
+      policy = new PartitionAwarePolicy(policy);
+    }
+    return policy;
   }
 
   protected void setupLoadBalancingPolicy(Cluster.Builder builder) {
